@@ -1,43 +1,43 @@
 package io.github.org4j.error;
 
-import lombok.experimental.UtilityClass;
+import java.util.regex.Pattern;
 
-@UtilityClass
-public class ErrorConstants {
+/** Names a problem detail carries on the wire, and where the error definitions are bound. */
+public final class ErrorConstants {
 
+  /** The prefix of the error definitions: {@code org4j.error.codes.<CODE>}. */
   public static final String PROPERTIES_PREFIX = "org4j.error";
 
+  /** The problem's stable code, and a sub-error's. */
   public static final String CODE_PROPERTY = "code";
 
-  public static final String LOG_UNEXPECTED_ERROR = "Unexpected error";
-  public static final String LOG_INVALID = "invalid fields ";
-  public static final String LOG_NO_DEFINITION = "No definition for error {}; answering 500";
-
-  public static final String LOG_PROBLEM = "✗ %d %s | %s | %s";
-
+  /** The trace id of the request that failed. */
   public static final String REQUEST_ID_PROPERTY = "requestId";
 
-  public static final String TRACE_ID_MDC = "traceId";
+  /** The failing fields of a {@code VALIDATION_FAILED} problem, each {@code {field, message}}. */
+  public static final String ERRORS_PROPERTY = "errors";
 
-  public static final ErrorStarterProperties.ErrorDefinition LAST_RESORT =
+  /** A third party's own codes, each {@code {code, message}}. */
+  public static final String SUB_ERRORS_PROPERTY = "subErrors";
+
+  static final String FIELD = "field";
+  static final String MESSAGE = "message";
+  static final String TRACE_ID_MDC = "traceId";
+
+  static final Pattern PLACEHOLDER = Pattern.compile("\\{(\\d{1,9})}");
+
+  static final String LOG_PROBLEM = "✗ %d %s | %s | %s";
+  static final String LOG_INVALID = "invalid fields ";
+  static final String LOG_NO_DEFINITION = "No definition for error %s; answering 500";
+
+  static final ErrorStarterProperties.ErrorDefinition LAST_RESORT =
       new ErrorStarterProperties.ErrorDefinition(
           500, "internal-error", true, "Something went wrong.", null, null);
 
-  public static final String ERRORS_PROPERTY = "errors";
-
-  public static final String SUB_ERRORS_PROPERTY = "subErrors";
-
-  public static final String FIELD = "field";
-  public static final String MESSAGE = "message";
-
-  /* ------- security ------- */
-  public static final String BEARER_CHALLENGE = "Bearer";
-
-  public static final String BOOT_WEB_MVC =
+  static final String BEARER_CHALLENGE = "Bearer";
+  static final String BOOT_WEB_MVC =
       "org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration";
+  static final String EXCEPTION_RESOLVER = "handlerExceptionResolver";
 
-  public static final String ACCESS_DENIED =
-      "org.springframework.security.access.AccessDeniedException";
-
-  public static final String EXCEPTION_RESOLVER = "handlerExceptionResolver";
+  private ErrorConstants() {}
 }

@@ -1,5 +1,6 @@
 package io.github.org4j.error;
 
+import static java.util.stream.Collectors.toSet;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
@@ -8,7 +9,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.MatchResult;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
@@ -19,18 +22,32 @@ import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.type.filter.AssignableTypeFilter;
 import org.springframework.util.ClassUtils;
 
+/**
+ * The check every service runs in a unit test: each error it throws has a status, a title and a
+ * message in English, Russian and Uzbek with the same placeholders, and no definition is left over.
+ *
+ * {@snippet :
+ * @Test
+ * void everyErrorIsDefined() {
+ *   ErrorDefinitions.assertComplete("com.example.partner");
+ * }
+ * }
+ */
 public final class ErrorDefinitions {
 
+  /** Where services keep their definitions. */
   public static final String DEFINITIONS = "classpath*:properties/*-exception.yaml";
 
   private static final Pattern PLACEHOLDER = Pattern.compile("\\{\\d+}");
 
   private ErrorDefinitions() {}
 
+  /** Checks every {@link StatusThrowable} enum under the package against the services' files. */
   public static void assertComplete(String basePackage) {
     assertComplete(basePackage, DEFINITIONS);
   }
 
+  /** Checks every {@link StatusThrowable} enum under the package against the files given. */
   public static void assertComplete(String basePackage, String locationPattern) {
     var definitions = definitions(locationPattern).codes();
     var thrown = new TreeSet<String>();
@@ -84,10 +101,7 @@ public final class ErrorDefinitions {
     return statuses;
   }
 
-  private static TreeSet<String> placeholders(String message) {
-    var found = new TreeSet<String>();
-    var matcher = PLACEHOLDER.matcher(message);
-    while (matcher.find()) found.add(matcher.group());
-    return found;
+  private static Set<String> placeholders(String message) {
+    return PLACEHOLDER.matcher(message).results().map(MatchResult::group).collect(toSet());
   }
 }

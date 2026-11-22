@@ -2,6 +2,7 @@ package io.github.org4j.error;
 
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
 import org.jspecify.annotations.Nullable;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
@@ -33,7 +34,10 @@ public record ErrorStarterProperties(@DefaultValue Map<String, ErrorDefinition> 
       @Nullable String messageRu,
       @Nullable String messageUz) {
 
-    /** The message in the locale's language: Russian, Uzbek, or English for everything else. */
+    /**
+     * The message in the locale's language (Russian, Uzbek, or English for everything else) with
+     * its placeholders filled. A placeholder without a parameter stays as it is.
+     */
     public String message(Locale locale, Object... params) {
       @Nullable String message =
           switch (locale.getLanguage()) {
@@ -41,11 +45,15 @@ public record ErrorStarterProperties(@DefaultValue Map<String, ErrorDefinition> 
             case "uz" -> messageUz;
             default -> messageEn;
           };
-      if (message == null) message = messageEn;
-      for (var i = 0; i < params.length; i++) {
-        message = message.replace("{" + i + "}", String.valueOf(params[i]));
-      }
-      return message;
+      // One pass, so a parameter that itself holds "{1}" is never filled in again.
+      return ErrorConstants.PLACEHOLDER
+          .matcher(message == null ? messageEn : message)
+          .replaceAll(
+              placeholder -> {
+                var index = Integer.parseInt(placeholder.group(1));
+                return Matcher.quoteReplacement(
+                    index < params.length ? String.valueOf(params[index]) : placeholder.group());
+              });
     }
   }
 }

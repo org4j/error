@@ -14,6 +14,10 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.web.servlet.HandlerExceptionResolver;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+/**
+ * Problem details for a servlet web app, ahead of Boot's own handler so that one backs off. With
+ * Spring Security on the classpath, also a {@link ProblemSecurityHandler} for the security chain.
+ */
 @AutoConfiguration(beforeName = ErrorConstants.BOOT_WEB_MVC)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @EnableConfigurationProperties(ErrorStarterProperties.class)

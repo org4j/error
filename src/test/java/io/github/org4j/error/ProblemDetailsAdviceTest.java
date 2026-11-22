@@ -19,6 +19,7 @@ import jakarta.validation.constraints.Size;
 import java.time.Duration;
 import java.util.List;
 import org.hamcrest.Matchers;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.slf4j.MDC;
@@ -120,205 +121,230 @@ class ProblemDetailsAdviceTest {
 
   private final MockMvc mvc = mvc();
 
-  @Test
-  void invalidInputListsTheFailingFields() throws Exception {
-    mvc.perform(
-            post("/signup")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"name\":\"a\",\"email\":\"nope\"}"))
-        .andExpect(status().isBadRequest())
-        .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
-        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
-        .andExpect(
-            jsonPath("$.errors[*].field").value(Matchers.containsInAnyOrder("name", "email")));
-  }
+  /** A service's own errors. */
+  @Nested
+  class OwnErrors {
 
-  @Test
-  void ownErrorsTakeStatusTitleAndMessageFromTheirDefinition() throws Exception {
-    mvc.perform(get("/taken"))
-        .andExpect(status().isConflict())
-        .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
-        .andExpect(jsonPath("$.code").value("EMAIL_TAKEN"))
-        .andExpect(jsonPath("$.title").value("email-taken"))
-        .andExpect(jsonPath("$.detail").value("aziz@example.uz is already registered."));
-    mvc.perform(get("/taken").header("Accept-Language", "uz"))
-        .andExpect(jsonPath("$.detail").value("aziz@example.uz allaqachon roʻyxatdan oʻtgan."));
-  }
-
-  @Test
-  void aThirdPartysOwnCodesTravelAsSubErrors() throws Exception {
-    mvc.perform(get("/refused"))
-        .andExpect(jsonPath("$.code").value("EMAIL_TAKEN"))
-        .andExpect(jsonPath("$.subErrors[0].code").value("-240"))
-        .andExpect(jsonPath("$.subErrors[0].message").value("Insufficient funds!"));
-    mvc.perform(get("/taken")).andExpect(jsonPath("$.subErrors").doesNotExist());
-  }
-
-  @Test
-  void anErrorWithoutADefinitionIsAPlain500() throws Exception {
-    mvc.perform(get("/undefined"))
-        .andExpect(status().isInternalServerError())
-        .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"));
-  }
-
-  @Test
-  void frameworkErrorsGetACodeNamedAfterTheStatus() throws Exception {
-    mvc.perform(delete("/taken"))
-        .andExpect(status().isMethodNotAllowed())
-        .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
-    mvc.perform(post("/signup").contentType(MediaType.APPLICATION_JSON).content("{not json"))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
-  }
-
-  @Test
-  void unexpectedErrorsNeverLeakDetails() throws Exception {
-    mvc.perform(get("/boom"))
-        .andExpect(status().isInternalServerError())
-        .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
-        .andExpect(content().string(Matchers.not(Matchers.containsString("hunter2"))));
-  }
-
-  @Test
-  void detailsSpeakTheCallersLanguage() throws Exception {
-    mvc.perform(get("/boom").header("Accept-Language", "ru"))
-        .andExpect(
-            jsonPath("$.detail")
-                .value("На нашей стороне что-то пошло не так. Попробуйте ещё раз."));
-    mvc.perform(delete("/taken").header("Accept-Language", "uz-UZ"))
-        .andExpect(jsonPath("$.detail").value("Bu yerda «DELETE» usuli qoʻllab-quvvatlanmaydi."));
-    mvc.perform(get("/boom").header("Accept-Language", "de"))
-        .andExpect(
-            jsonPath("$.detail").value("Something went wrong on our side. Please try again."));
-  }
-
-  @Test
-  void aValidatedServicesRefusalIsA400ListingItsFields() throws Exception {
-    mvc.perform(post("/service"))
-        .andExpect(status().isBadRequest())
-        .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
-        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
-        .andExpect(
-            jsonPath("$.errors[*].field").value(Matchers.containsInAnyOrder("name", "email")));
-  }
-
-  @Test
-  void methodSecurityDenialIsA403() throws Exception {
-    mvc.perform(get("/denied"))
-        .andExpect(status().isForbidden())
-        .andExpect(jsonPath("$.code").value("FORBIDDEN"));
-  }
-
-  @Test
-  void everyProblemNamesItsRequestAndItsTrace() throws Exception {
-    mvc.perform(get("/taken")).andExpect(jsonPath("$.instance").value("/taken"));
-    mvc.perform(delete("/taken")).andExpect(jsonPath("$.instance").value("/taken"));
-    MDC.put("traceId", "4bf92f3577b34da6a3ce929d0e0e4736");
-    try {
-      mvc.perform(get("/boom"))
-          .andExpect(jsonPath("$.requestId").value("4bf92f3577b34da6a3ce929d0e0e4736"));
-    } finally {
-      MDC.remove("traceId");
+    @Test
+    void ownErrorsTakeStatusTitleAndMessageFromTheirDefinition() throws Exception {
+      mvc.perform(get("/taken"))
+          .andExpect(status().isConflict())
+          .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+          .andExpect(jsonPath("$.code").value("EMAIL_TAKEN"))
+          .andExpect(jsonPath("$.title").value("email-taken"))
+          .andExpect(jsonPath("$.detail").value("aziz@example.uz is already registered."));
+      mvc.perform(get("/taken").header("Accept-Language", "uz"))
+          .andExpect(jsonPath("$.detail").value("aziz@example.uz allaqachon roʻyxatdan oʻtgan."));
     }
-    mvc.perform(get("/boom")).andExpect(jsonPath("$.requestId").doesNotExist());
+
+    @Test
+    void aThirdPartysOwnCodesTravelAsSubErrors() throws Exception {
+      mvc.perform(get("/refused"))
+          .andExpect(jsonPath("$.code").value("EMAIL_TAKEN"))
+          .andExpect(jsonPath("$.subErrors[0].code").value("-240"))
+          .andExpect(jsonPath("$.subErrors[0].message").value("Insufficient funds!"));
+      mvc.perform(get("/taken")).andExpect(jsonPath("$.subErrors").doesNotExist());
+    }
+
+    @Test
+    void anErrorWithoutADefinitionIsAPlain500() throws Exception {
+      mvc.perform(get("/undefined"))
+          .andExpect(status().isInternalServerError())
+          .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"));
+    }
+
+    @Test
+    void aLimitThatLiftsSaysWhenInWholeSeconds() throws Exception {
+      mvc.perform(get("/later")).andExpect(header().string("Retry-After", "42"));
+      mvc.perform(get("/taken")).andExpect(header().doesNotExist("Retry-After"));
+    }
   }
 
-  @Test
-  void aLimitThatLiftsSaysWhenInWholeSeconds() throws Exception {
-    mvc.perform(get("/later")).andExpect(header().string("Retry-After", "42"));
-    mvc.perform(get("/taken")).andExpect(header().doesNotExist("Retry-After"));
+  /** Invalid input, from a controller or a validated service. */
+  @Nested
+  class InvalidInput {
+
+    @Test
+    void invalidInputListsTheFailingFields() throws Exception {
+      mvc.perform(
+              post("/signup")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{\"name\":\"a\",\"email\":\"nope\"}"))
+          .andExpect(status().isBadRequest())
+          .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+          .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+          .andExpect(
+              jsonPath("$.errors[*].field").value(Matchers.containsInAnyOrder("name", "email")));
+    }
+
+    @Test
+    void aValidatedServicesRefusalIsA400ListingItsFields() throws Exception {
+      mvc.perform(post("/service"))
+          .andExpect(status().isBadRequest())
+          .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+          .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+          .andExpect(
+              jsonPath("$.errors[*].field").value(Matchers.containsInAnyOrder("name", "email")));
+    }
   }
 
-  @Test
-  void theLogLineHoldsTheCodeButNoneOfTheCallersData(CapturedOutput output) throws Exception {
-    mvc.perform(get("/taken").header("Accept-Language", "uz"));
-    mvc.perform(post("/service"));
-    assertThat(output)
-        .contains("409 EMAIL_TAKEN | GET /taken | {0} is already registered.")
-        .contains("400 VALIDATION_FAILED | POST /service")
-        .doesNotContain("aziz@example.uz", "allaqachon", "nope");
+  /** Spring's own errors, security's, and the unexpected. */
+  @Nested
+  class Framework {
+
+    @Test
+    void frameworkErrorsGetACodeNamedAfterTheStatus() throws Exception {
+      mvc.perform(delete("/taken"))
+          .andExpect(status().isMethodNotAllowed())
+          .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+      mvc.perform(post("/signup").contentType(MediaType.APPLICATION_JSON).content("{not json"))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+    }
+
+    @Test
+    void methodSecurityDenialIsA403() throws Exception {
+      mvc.perform(get("/denied"))
+          .andExpect(status().isForbidden())
+          .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    void unexpectedErrorsNeverLeakDetails() throws Exception {
+      mvc.perform(get("/boom"))
+          .andExpect(status().isInternalServerError())
+          .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+          .andExpect(content().string(Matchers.not(Matchers.containsString("hunter2"))));
+    }
   }
 
-  @Test
-  void aSpringErrorLogsItsClassNotTheCallersInput(CapturedOutput output) throws Exception {
-    mvc.perform(get("/bins/12").param("page", "aziz@example.uz"))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
-    assertThat(output)
-        .contains("400 BAD_REQUEST | GET /bins/12 | MethodArgumentTypeMismatchException")
-        .doesNotContain("aziz@example.uz");
+  /** What every problem carries. */
+  @Nested
+  class Answer {
+
+    @Test
+    void detailsSpeakTheCallersLanguage() throws Exception {
+      mvc.perform(get("/boom").header("Accept-Language", "ru"))
+          .andExpect(
+              jsonPath("$.detail")
+                  .value("На нашей стороне что-то пошло не так. Попробуйте ещё раз."));
+      mvc.perform(delete("/taken").header("Accept-Language", "uz-UZ"))
+          .andExpect(jsonPath("$.detail").value("Bu yerda «DELETE» usuli qoʻllab-quvvatlanmaydi."));
+      mvc.perform(get("/boom").header("Accept-Language", "de"))
+          .andExpect(
+              jsonPath("$.detail").value("Something went wrong on our side. Please try again."));
+    }
+
+    @Test
+    void everyProblemNamesItsRequestAndItsTrace() throws Exception {
+      mvc.perform(get("/taken")).andExpect(jsonPath("$.instance").value("/taken"));
+      mvc.perform(delete("/taken")).andExpect(jsonPath("$.instance").value("/taken"));
+      MDC.put("traceId", "4bf92f3577b34da6a3ce929d0e0e4736");
+      try {
+        mvc.perform(get("/boom"))
+            .andExpect(jsonPath("$.requestId").value("4bf92f3577b34da6a3ce929d0e0e4736"));
+      } finally {
+        MDC.remove("traceId");
+      }
+      mvc.perform(get("/boom")).andExpect(jsonPath("$.requestId").doesNotExist());
+    }
+
+    @Test
+    void aPathNoUriCanHoldIsStillAProblem() throws Exception {
+      mvc.perform(
+              get("/odd")
+                  .with(
+                      request -> {
+                        request.setRequestURI("/odd|path");
+                        return request;
+                      }))
+          .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+          .andExpect(jsonPath("$.code").exists())
+          .andExpect(jsonPath("$.instance").value("/odd%7Cpath"));
+    }
+
+    @Test
+    void problemDetailsMasksSensitiveDataInDetailAndSubErrors() throws Exception {
+      var masking = new Masking(MaskingRules.of(List.of("pan", "client_secret")));
+      mvc(masking)
+          .perform(get("/card"))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.code").value("CARD_DECLINED"))
+          .andExpect(jsonPath("$.detail").value("Card pan=860030......7890 was declined."))
+          .andExpect(jsonPath("$.subErrors[0].message").value("declined with client_secret=......"))
+          .andExpect(
+              jsonPath("$.detail").value(Matchers.not(Matchers.containsString("8600301234567890"))))
+          .andExpect(
+              jsonPath("$.subErrors[0].message")
+                  .value(Matchers.not(Matchers.containsString("s3cr3t"))));
+    }
   }
 
-  @Test
-  void theWholeLineIsMasked(CapturedOutput output) throws Exception {
-    mvc(new Masking(MaskingRules.of(List.of("bins"))))
-        .perform(get("/bins/8600301234567890"))
-        .andExpect(status().isBadRequest());
-    assertThat(output).contains("GET /bins/860030......7890").doesNotContain("8600301234567890");
-  }
+  /** The one log line per problem. */
+  @Nested
+  class Logging {
 
-  @Test
-  void aPathNoUriCanHoldIsStillAProblem() throws Exception {
-    mvc.perform(
-            get("/odd")
-                .with(
-                    request -> {
-                      request.setRequestURI("/odd|path");
-                      return request;
-                    }))
-        .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
-        .andExpect(jsonPath("$.code").exists())
-        .andExpect(jsonPath("$.instance").value("/odd%7Cpath"));
-  }
+    @Test
+    void theLogLineHoldsTheCodeButNoneOfTheCallersData(CapturedOutput output) throws Exception {
+      mvc.perform(get("/taken").header("Accept-Language", "uz"));
+      mvc.perform(post("/service"));
+      assertThat(output)
+          .contains("409 EMAIL_TAKEN | GET /taken | {0} is already registered.")
+          .contains("400 VALIDATION_FAILED | POST /service")
+          .doesNotContain("aziz@example.uz", "allaqachon", "nope");
+    }
 
-  @Test
-  void clientErrorsLogAtWarnOrInfoAndNeverAtError(CapturedOutput output) throws Exception {
-    mvc.perform(get("/taken")).andExpect(status().isConflict());
-    mvc.perform(get("/card")).andExpect(status().isBadRequest());
-    mvc.perform(delete("/taken")).andExpect(status().isMethodNotAllowed());
-    mvc.perform(post("/signup").contentType(MediaType.APPLICATION_JSON).content("{bad json"))
-        .andExpect(status().isBadRequest());
-    mvc.perform(get("/denied")).andExpect(status().isForbidden());
+    @Test
+    void aSpringErrorLogsItsClassNotTheCallersInput(CapturedOutput output) throws Exception {
+      mvc.perform(get("/bins/12").param("page", "aziz@example.uz"))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+      assertThat(output)
+          .contains("400 BAD_REQUEST | GET /bins/12 | MethodArgumentTypeMismatchException")
+          .doesNotContain("aziz@example.uz");
+    }
 
-    assertThat(output)
-        .contains("409 EMAIL_TAKEN")
-        .contains("400 CARD_DECLINED")
-        .contains("405 METHOD_NOT_ALLOWED")
-        .contains("400 BAD_REQUEST")
-        .contains("403 FORBIDDEN");
-    assertThat(output.getOut().lines())
-        .filteredOn(line -> line.contains("io.github.org4j.error.ProblemDetailsAdvice"))
-        .noneMatch(line -> line.contains("ERROR"));
-  }
+    @Test
+    void theWholeLineIsMasked(CapturedOutput output) throws Exception {
+      mvc(new Masking(MaskingRules.of(List.of("bins"))))
+          .perform(get("/bins/8600301234567890"))
+          .andExpect(status().isBadRequest());
+      assertThat(output).contains("GET /bins/860030......7890").doesNotContain("8600301234567890");
+    }
 
-  @Test
-  void serverErrorsLogAtErrorWithSingleStructuredSummaryAndException(CapturedOutput output)
-      throws Exception {
-    mvc.perform(get("/boom")).andExpect(status().isInternalServerError());
+    @Test
+    void clientErrorsLogAtWarnOrInfoAndNeverAtError(CapturedOutput output) throws Exception {
+      mvc.perform(get("/taken")).andExpect(status().isConflict());
+      mvc.perform(get("/card")).andExpect(status().isBadRequest());
+      mvc.perform(delete("/taken")).andExpect(status().isMethodNotAllowed());
+      mvc.perform(post("/signup").contentType(MediaType.APPLICATION_JSON).content("{bad json"))
+          .andExpect(status().isBadRequest());
+      mvc.perform(get("/denied")).andExpect(status().isForbidden());
 
-    assertThat(output)
-        .contains("500 INTERNAL_ERROR | GET /boom")
-        .contains("IllegalStateException: db password is hunter2")
-        .doesNotContain("Unexpected error");
-    assertThat(output.getOut().lines())
-        .filteredOn(line -> line.contains("io.github.org4j.error.ProblemDetailsAdvice"))
-        .anyMatch(line -> line.contains("ERROR") && line.contains("500 INTERNAL_ERROR"));
-  }
+      assertThat(output)
+          .contains("409 EMAIL_TAKEN")
+          .contains("400 CARD_DECLINED")
+          .contains("405 METHOD_NOT_ALLOWED")
+          .contains("400 BAD_REQUEST")
+          .contains("403 FORBIDDEN");
+      assertThat(output.getOut().lines())
+          .filteredOn(line -> line.contains("io.github.org4j.error.ProblemDetailsAdvice"))
+          .noneMatch(line -> line.contains("ERROR"));
+    }
 
-  @Test
-  void problemDetailsMasksSensitiveDataInDetailAndSubErrors() throws Exception {
-    var masking = new Masking(MaskingRules.of(List.of("pan", "client_secret")));
-    mvc(masking)
-        .perform(get("/card"))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("CARD_DECLINED"))
-        .andExpect(jsonPath("$.detail").value("Card pan=860030......7890 was declined."))
-        .andExpect(jsonPath("$.subErrors[0].message").value("declined with client_secret=......"))
-        .andExpect(
-            jsonPath("$.detail").value(Matchers.not(Matchers.containsString("8600301234567890"))))
-        .andExpect(
-            jsonPath("$.subErrors[0].message")
-                .value(Matchers.not(Matchers.containsString("s3cr3t"))));
+    @Test
+    void serverErrorsLogAtErrorWithSingleStructuredSummaryAndException(CapturedOutput output)
+        throws Exception {
+      mvc.perform(get("/boom")).andExpect(status().isInternalServerError());
+
+      assertThat(output)
+          .contains("500 INTERNAL_ERROR | GET /boom")
+          .contains("IllegalStateException: db password is hunter2")
+          .doesNotContain("Unexpected error");
+      assertThat(output.getOut().lines())
+          .filteredOn(line -> line.contains("io.github.org4j.error.ProblemDetailsAdvice"))
+          .anyMatch(line -> line.contains("ERROR") && line.contains("500 INTERNAL_ERROR"));
+    }
   }
 
   private static MockMvc mvc() {

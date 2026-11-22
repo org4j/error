@@ -1,13 +1,26 @@
 # error
 
-One error format for every service: RFC 9457 problem details with a stable `code`, a message in
-the caller's language (`Accept-Language`: en, ru, uz), the request (`instance`) and its trace id
-(`requestId`). Use it in every web app and adapter.
+One error format for every service: RFC 9457 problem details with a stable `code` and a message in
+the caller's language (`Accept-Language`: en, ru, uz). Use it in every web app and adapter.
 
 ```groovy
 implementation libs.error
 testImplementation testFixtures(libs.error) // ErrorDefinitions
 ```
+
+## The answer
+
+| Field | What |
+|---|---|
+| `status`, `title` | from the error's definition |
+| `detail` | the definition's message in the caller's language, parameters filled in, masked |
+| `code` | the error's type: `PARTNER_EMAIL_TAKEN`, or `NOT_FOUND` for Spring's own errors |
+| `instance` | the request's path |
+| `requestId` | the trace id, when the logging context has one |
+| `errors` | for `VALIDATION_FAILED`: each failing `{field, message}` |
+| `subErrors` | a third party's own `{code, message}`, masked |
+
+The names are in `ErrorConstants`. The content type is `application/problem+json`.
 
 ## Throwing an error
 
@@ -28,8 +41,13 @@ org4j:
 ```
 
 `throw new GeneralException(PartnerExceptionStatus.PARTNER_EMAIL_TAKEN, email)` answers 409 with
-that message. `.subError(code, message)` passes on a third party's own code (a card scheme's), and
-`.retryAfter(duration)` sends `Retry-After` for a limit that lifts by itself.
+that message. Each parameter fills its placeholder once, as written: a parameter that holds `{1}`
+stays `{1}`.
+
+| Call | Does |
+|---|---|
+| `.subError(code, message)` | passes on a third party's own code, such as a card scheme's |
+| `.retryAfter(duration)` | sends `Retry-After` in whole seconds, rounded up, for a limit that lifts by itself |
 
 Every error response is logged once: status, code, request and the English message without its
 parameters, masked. A 5xx is an error, an `is-loggable` one a warning, anything else info.
@@ -70,8 +88,10 @@ empty for an HTML page or no body), `Problems.code(problem)` its code and
 
 ## Tests
 
-- `./gradlew test`: every kind of failure as a problem detail, the log line,
-  `Problems`, and `ErrorDefinitions` against fixture definitions.
+- `./gradlew test`: `ProblemDetailsAdviceTest` is the specification, one nested group per
+  behaviour (own errors, invalid input, framework errors, the answer, logging). Beside it:
+  `GeneralException`, message placeholders, the security handler, `Problems`, and
+  `ErrorDefinitions` against fixture definitions.
 - `./gradlew integrationTest`: on a real server with Spring Security and Boot's
   own problem-details handler switched on, and `Problems` against WireMock.
 - Every service runs `ErrorDefinitions.assertComplete("com.example")` in a unit test: each code
