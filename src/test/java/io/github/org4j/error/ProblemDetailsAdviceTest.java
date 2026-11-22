@@ -348,7 +348,7 @@ class ProblemDetailsAdviceTest {
   }
 
   private static MockMvc mvc() {
-    return mvc(Masking.defaults());
+    return mvc(Masking.empty());
   }
 
   private static MockMvc mvc(Masking masking) {

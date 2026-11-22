@@ -27,7 +27,7 @@ public class ErrorAutoConfiguration {
   @ConditionalOnMissingBean(ResponseEntityExceptionHandler.class)
   ProblemDetailsAdvice problemDetailsAdvice(
       ErrorStarterProperties errors, ObjectProvider<Masking> masking) {
-    return new ProblemDetailsAdvice(errors, masking.getIfAvailable(Masking::defaults));
+    return new ProblemDetailsAdvice(errors, masking.getIfAvailable(Masking::empty));
   }
 
   @Configuration(proxyBeanMethods = false)
