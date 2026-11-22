@@ -16,7 +16,6 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.FieldError;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -28,6 +27,11 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 import org.springframework.web.util.UriComponentsBuilder;
 
+/**
+ * Answers every failure with a problem detail: a {@link GeneralException} from its definition, a
+ * validation failure as {@code VALIDATION_FAILED}, Spring's own errors with a code named after
+ * their status, and anything else as {@code INTERNAL_ERROR}. Each answer is logged once, masked.
+ */
 @RestControllerAdvice
 class ProblemDetailsAdvice extends ResponseEntityExceptionHandler {
 
@@ -35,10 +39,6 @@ class ProblemDetailsAdvice extends ResponseEntityExceptionHandler {
 
   private final ErrorStarterProperties errors;
   private final Masking masking;
-
-  ProblemDetailsAdvice(ErrorStarterProperties errors) {
-    this(errors, Masking.defaults());
-  }
 
   ProblemDetailsAdvice(ErrorStarterProperties errors, Masking masking) {
     this.errors = errors;
@@ -50,25 +50,23 @@ class ProblemDetailsAdvice extends ResponseEntityExceptionHandler {
     var definition = errors.codes().get(ex.getStatus().getType());
     var problem = problem(ex.getStatus(), ex.getParams());
     if (!ex.getSubErrors().isEmpty()) {
-      var maskedSubErrors =
+      problem.setProperty(
+          ErrorConstants.SUB_ERRORS_PROPERTY,
           ex.getSubErrors().stream()
-              .map(
-                  se ->
-                      new GeneralException.SubError(
-                          se.code(), se.message() == null ? null : masking.text(se.message())))
-              .toList();
-      problem.setProperty(ErrorConstants.SUB_ERRORS_PROPERTY, maskedSubErrors);
+              .map(sub -> new GeneralException.SubError(sub.code(), masking.text(sub.message())))
+              .toList());
     }
     log(
         problem,
         definition == null ? null : definition.messageEn(),
-        loggable(definition),
+        definition != null && definition.isLoggable(),
         ex.getCause());
     var response =
         ResponseEntity.status(problem.getStatus()).contentType(MediaType.APPLICATION_PROBLEM_JSON);
-    if (ex.getRetryAfter() != null) {
+    var wait = ex.getRetryAfter();
+    if (wait != null) {
       // Whole seconds, rounded up: a client that waits this long is never early.
-      var seconds = Math.max(1, (ex.getRetryAfter().toMillis() + 999) / 1000);
+      var seconds = Math.max(1, (wait.toMillis() + 999) / 1000);
       response.header(HttpHeaders.RETRY_AFTER, String.valueOf(seconds));
     }
     return response.body(problem);
@@ -79,13 +77,7 @@ class ProblemDetailsAdvice extends ResponseEntityExceptionHandler {
     var problem = problem(ErrorExceptionStatus.VALIDATION_FAILED);
     var fields =
         ex.getConstraintViolations().stream()
-            .map(
-                violation ->
-                    Map.of(
-                        ErrorConstants.FIELD,
-                        violation.getPropertyPath().toString(),
-                        ErrorConstants.MESSAGE,
-                        String.valueOf(masking.text(violation.getMessage()))))
+            .map(violation -> field(violation.getPropertyPath().toString(), violation.getMessage()))
             .toList();
     problem.setProperty(ErrorConstants.ERRORS_PROPERTY, fields);
     log(problem, ErrorConstants.LOG_INVALID + fieldNames(fields), false, null);
@@ -99,32 +91,17 @@ class ProblemDetailsAdvice extends ResponseEntityExceptionHandler {
     return general(new GeneralException(ErrorExceptionStatus.INTERNAL_ERROR, ex));
   }
 
-  private ProblemDetail problem(StatusThrowable status, Object... params) {
-    var definition = errors.codes().get(status.getType());
-    if (definition == null) {
-      log.error(ErrorConstants.LOG_NO_DEFINITION.replace("{}", status.getType()));
-      status = ErrorExceptionStatus.INTERNAL_ERROR;
-      params = new Object[0];
-      definition = errors.codes().getOrDefault(status.getType(), ErrorConstants.LAST_RESORT);
-    }
-    var detail = definition.message(LocaleContextHolder.getLocale(), params);
-    var maskedDetail = detail == null ? null : masking.text(detail);
-    var problem =
-        ProblemDetail.forStatusAndDetail(HttpStatus.valueOf(definition.httpCode()), maskedDetail);
-    problem.setTitle(definition.title());
-    problem.setProperty(ErrorConstants.CODE_PROPERTY, status.getType());
-    identify(problem);
-    return problem;
-  }
-
   @Override
   protected @Nullable ResponseEntity<Object> handleMethodArgumentNotValid(
       MethodArgumentNotValidException ex,
       HttpHeaders headers,
       HttpStatusCode status,
       WebRequest request) {
-    var errors = ex.getBindingResult().getFieldErrors().stream().map(this::fieldError).toList();
-    return invalid(ex, ex.getBody(), errors, headers, status, request);
+    var fields =
+        ex.getBindingResult().getFieldErrors().stream()
+            .map(error -> field(error.getField(), error.getDefaultMessage()))
+            .toList();
+    return invalid(ex, ex.getBody(), fields, headers, status, request);
   }
 
   @Override
@@ -133,21 +110,18 @@ class ProblemDetailsAdvice extends ResponseEntityExceptionHandler {
       HttpHeaders headers,
       HttpStatusCode status,
       WebRequest request) {
-    var errors =
+    var fields =
         ex.getParameterValidationResults().stream()
             .flatMap(
                 result ->
                     result.getResolvableErrors().stream()
                         .map(
                             error ->
-                                Map.of(
-                                    ErrorConstants.FIELD,
+                                field(
                                     String.valueOf(result.getMethodParameter().getParameterName()),
-                                    ErrorConstants.MESSAGE,
-                                    String.valueOf(
-                                        masking.text(String.valueOf(error.getDefaultMessage()))))))
+                                    error.getDefaultMessage())))
             .toList();
-    return invalid(ex, ex.getBody(), errors, headers, status, request);
+    return invalid(ex, ex.getBody(), fields, headers, status, request);
   }
 
   @Override
@@ -162,25 +136,44 @@ class ProblemDetailsAdvice extends ResponseEntityExceptionHandler {
       body = error.updateAndGetBody(getMessageSource(), LocaleContextHolder.getLocale());
     }
     if (body instanceof ProblemDetail problem) {
-      var named = HttpStatus.resolve(status.value());
       if (problem.getProperties() == null
           || !problem.getProperties().containsKey(ErrorConstants.CODE_PROPERTY)) {
+        var named = HttpStatus.resolve(status.value());
         problem.setProperty(
             ErrorConstants.CODE_PROPERTY,
             named == null ? String.valueOf(status.value()) : named.name());
-        // Spring's messages quote the caller's input ("For input string: …"); its class name
+        // Spring's messages quote the caller's input ("For input string: …"); the class name
         // doesn't.
-        log(problem, ex.getClass().getSimpleName(), false, status.value() >= 500 ? ex : null);
+        log(problem, ex.getClass().getSimpleName(), false, status.is5xxServerError() ? ex : null);
       }
       identify(problem);
     }
     return super.handleExceptionInternal(ex, body, headers, status, request);
   }
 
+  private ProblemDetail problem(StatusThrowable status, Object... params) {
+    var type = status.getType();
+    var definition = errors.codes().get(type);
+    var filled = params;
+    if (definition == null) {
+      log.error(ErrorConstants.LOG_NO_DEFINITION.formatted(type));
+      type = ErrorExceptionStatus.INTERNAL_ERROR.getType();
+      definition = errors.codes().getOrDefault(type, ErrorConstants.LAST_RESORT);
+      filled = new Object[0];
+    }
+    var detail = masking.text(definition.message(LocaleContextHolder.getLocale(), filled));
+    var problem =
+        ProblemDetail.forStatusAndDetail(HttpStatus.valueOf(definition.httpCode()), detail);
+    problem.setTitle(definition.title());
+    problem.setProperty(ErrorConstants.CODE_PROPERTY, type);
+    identify(problem);
+    return problem;
+  }
+
   private @Nullable ResponseEntity<Object> invalid(
       Exception ex,
       ProblemDetail problem,
-      List<Map<String, String>> errors,
+      List<Map<String, String>> fields,
       HttpHeaders headers,
       HttpStatusCode status,
       WebRequest request) {
@@ -189,25 +182,21 @@ class ProblemDetailsAdvice extends ResponseEntityExceptionHandler {
     problem.setDetail(invalid.getDetail());
     problem.setProperty(
         ErrorConstants.CODE_PROPERTY, ErrorExceptionStatus.VALIDATION_FAILED.getType());
-    problem.setProperty(ErrorConstants.ERRORS_PROPERTY, errors);
-    log(problem, ErrorConstants.LOG_INVALID + fieldNames(errors), false, null);
+    problem.setProperty(ErrorConstants.ERRORS_PROPERTY, fields);
+    log(problem, ErrorConstants.LOG_INVALID + fieldNames(fields), false, null);
     return handleExceptionInternal(ex, problem, headers, status, request);
   }
 
-  private Map<String, String> fieldError(FieldError error) {
+  private Map<String, String> field(String name, @Nullable String message) {
     return Map.of(
         ErrorConstants.FIELD,
-        error.getField(),
+        name,
         ErrorConstants.MESSAGE,
-        String.valueOf(masking.text(String.valueOf(error.getDefaultMessage()))));
+        String.valueOf(masking.text(String.valueOf(message))));
   }
 
-  private static List<String> fieldNames(List<Map<String, String>> errors) {
-    return errors.stream().map(error -> error.get(ErrorConstants.FIELD)).toList();
-  }
-
-  private static boolean loggable(ErrorStarterProperties.@Nullable ErrorDefinition definition) {
-    return definition != null && definition.isLoggable();
+  private static List<String> fieldNames(List<Map<String, String>> fields) {
+    return fields.stream().map(field -> field.get(ErrorConstants.FIELD)).toList();
   }
 
   private static void identify(ProblemDetail problem) {
@@ -230,18 +219,14 @@ class ProblemDetailsAdvice extends ResponseEntityExceptionHandler {
       ProblemDetail problem, @Nullable String reason, boolean loggable, @Nullable Throwable ex) {
     var properties = problem.getProperties() == null ? Map.of() : problem.getProperties();
     var line =
-        ErrorConstants.LOG_PROBLEM.formatted(
-            problem.getStatus(),
-            properties.get(ErrorConstants.CODE_PROPERTY),
-            request(),
-            reason == null ? String.valueOf(problem.getTitle()) : reason);
-    line = String.valueOf(masking.text(line));
+        masking.text(
+            ErrorConstants.LOG_PROBLEM.formatted(
+                problem.getStatus(),
+                properties.get(ErrorConstants.CODE_PROPERTY),
+                request(),
+                reason == null ? problem.getTitle() : reason));
     if (problem.getStatus() >= 500) {
-      if (ex != null) {
-        log.error(line, ex);
-      } else {
-        log.error(line);
-      }
+      log.error(line, ex);
     } else if (loggable) {
       log.warn(line);
     } else {
